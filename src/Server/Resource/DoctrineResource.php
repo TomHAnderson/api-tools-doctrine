@@ -14,6 +14,7 @@ use Doctrine\Instantiator\InstantiatorInterface;
 use Doctrine\ODM\MongoDB\Query\Builder as MongoDBQueryBuilder;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\NoResultException;
+use Doctrine\ORM\Query as ORMQuery;
 use Doctrine\ORM\Query\QueryException;
 use DoctrineModule\Persistence\ObjectManagerAwareInterface;
 use DoctrineModule\Stdlib\Hydrator;
@@ -588,28 +589,29 @@ class DoctrineResource extends AbstractResourceListener implements
                  * DomainException here.
                  *
                  * Calling getSql forces the Query to parse()
+                 * ODM fails gracefully and does not need a catch.
                  */
-                try {
-                    $collection->getAdapter()->getQuery()->getSql();
-                } catch (QueryException $e) {
+                if ($collection->getAdapter() instanceof \Laminas\ApiTools\Doctrine\Server\Paginator\Adapter\DoctrineOrmAdapter) {
+                    try {
+                        $collection->getAdapter()->getQuery()->getSQL();
+                    } catch (QueryException $e) {
 
-                    $exception = new DomainException('Invalid query.', $e->getCode());
-                    if ($this->displayExceptions) {
-                        $exception->setAdditionalDetails([$e->getMessage()]);
+                        $exception = new DomainException('Invalid query.', $e->getCode());
+                        if ($this->displayExceptions) {
+                            $exception->setAdditionalDetails([$e->getMessage()]);
+                        }
+
+                        throw $exception;
                     }
 
-                    throw $exception;
+                    $collection->setItemCountPerPage($halCollection->getPageSize());
+                    $collection->setCurrentPageNumber($halCollection->getPage());
+
+                    $halCollection->setCollectionRouteOptions([
+                        'query' => $e->getTarget()->getRequest()->getQuery()->toArray(),
+                    ]);
                 }
-
-                $collection->setItemCountPerPage($halCollection->getPageSize());
-                $collection->setCurrentPageNumber($halCollection->getPage());
-
-                $halCollection->setCollectionRouteOptions([
-                    'query' => $e->getTarget()->getRequest()->getQuery()->toArray(),
-                ]);
-
-                die('event 1');
-            }
+            }, 100
         );
 
         return $collection;
