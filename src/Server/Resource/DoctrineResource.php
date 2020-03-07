@@ -14,9 +14,12 @@ use Doctrine\Instantiator\InstantiatorInterface;
 use Doctrine\ODM\MongoDB\Query\Builder as MongoDBQueryBuilder;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\NoResultException;
+use Doctrine\ORM\Query\QueryException;
 use DoctrineModule\Persistence\ObjectManagerAwareInterface;
 use DoctrineModule\Stdlib\Hydrator;
 use Laminas\ApiTools\ApiProblem\ApiProblem;
+use Laminas\ApiTools\ApiProblem\ApiProblemResponse;
+use Laminas\ApiTools\ApiProblem\Exception\DomainException;
 use Laminas\ApiTools\Doctrine\Server\Event\DoctrineResourceEvent;
 use Laminas\ApiTools\Doctrine\Server\Exception\InvalidArgumentException;
 use Laminas\ApiTools\Doctrine\Server\Query\CreateFilter\QueryCreateFilterInterface;
@@ -95,11 +98,17 @@ class DoctrineResource extends AbstractResourceListener implements
     private $entityFactory;
 
     /**
+     * @var bool $displayExceptions
+     */
+    private $displayExceptions;
+
+    /**
      * @param InstantiatorInterface|null $entityFactory
      */
-    public function __construct(InstantiatorInterface $entityFactory = null)
+    public function __construct(InstantiatorInterface $entityFactory = null, $displayExceptions)
     {
         $this->entityFactory = $entityFactory;
+        $this->displayExceptions = $displayExceptions;
     }
 
     /**
@@ -564,12 +573,42 @@ class DoctrineResource extends AbstractResourceListener implements
                 $halCollection = $e->getParam('collection');
                 $collection = $halCollection->getCollection();
 
+                /**
+                 * Validate the query.  laminas-api-tools-doctrine-querybuilder
+                 * can form invalid SQL.
+                 * This method is used to catch QueryExceptions then format a
+                 * DomainException them so inner-working of the ORM are not
+                 * divulged to the user.
+                 *
+                 * Doctrine by default gives verbose exception messages but
+                 * they can tell too much.  The api-tools-doctrine-querybuilder
+                 * allows the user to name fields and if a field name specified
+                 * by the user does not exist an exception will be thrown.
+                 * This is the primary reason for throwing a composed
+                 * DomainException here.
+                 *
+                 * Calling getSql forces the Query to parse()
+                 */
+                try {
+                    $collection->getAdapter()->getQuery()->getSql();
+                } catch (QueryException $e) {
+
+                    $exception = new DomainException('Invalid query.', $e->getCode());
+                    if ($this->displayExceptions) {
+                        $exception->setAdditionalDetails([$e->getMessage()]);
+                    }
+
+                    throw $exception;
+                }
+
                 $collection->setItemCountPerPage($halCollection->getPageSize());
                 $collection->setCurrentPageNumber($halCollection->getPage());
 
                 $halCollection->setCollectionRouteOptions([
                     'query' => $e->getTarget()->getRequest()->getQuery()->toArray(),
                 ]);
+
+                die('event 1');
             }
         );
 
